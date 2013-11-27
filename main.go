@@ -13,14 +13,20 @@ import (
 )
 
 
+type Line struct {
+    Value string `xml:",chardata"`
+    Header string `xml:"header,attr"`
+}
+
 type TemplateConfig struct {
     Name string `xml:"name,attr"`
-    Lines []string `xml:"Lines>Line"`
+    Lines []Line `xml:"Lines>Line"`
 }
 
 type FileConfig struct {
     Name string `xml:"name,attr"`
     TemplateName string `xml:"templateName,attr"`
+    Skip int `xml:"skip,attr"`
 }
 
 type Config struct {
@@ -45,15 +51,23 @@ func makeTemplates(t *[]TemplateConfig) (*template.Template,error) {
     templateFuncs := template.FuncMap{"padBefore":PadBefore}
     for i,templateConfig := range *t {
         t:=""
+        h:=""
         for i,l:=range templateConfig.Lines {
-            if i>0 {t=t+"\t"}
-            t=t+l
+            if i>0 {t=t+"\t";h=h+"\t"}
+            t=t+l.Value
+            h=h+l.Header
         }
+
+        // Template proper
         if i==0 {
             textTemplates,err=template.New(templateConfig.Name).Funcs(templateFuncs).Parse(t)
         } else {
             textTemplates,err=textTemplates.New(templateConfig.Name).Funcs(templateFuncs).Parse(t)
         }
+
+        // Template header
+        textTemplates,err=textTemplates.New(templateConfig.Name + "_H").Funcs(templateFuncs).Parse(h)
+
         if err!=nil {break}
     }
     return textTemplates,err
@@ -82,6 +96,8 @@ func processHeader(fc FileConfig, t *template.Template) () {
     fmt.Println("File: ",fc.Name)
     w:= new(tabwriter.Writer)
     w.Init(os.Stdout, 0, 8, 0, '\t', tabwriter.Debug)
+    t.ExecuteTemplate(w,fc.TemplateName+"_H",makeTemplateContext(&record))
+    w.Write([]byte("\n"))
     t.ExecuteTemplate(w,fc.TemplateName,makeTemplateContext(&record))
     w.Flush()
     fmt.Println("")
@@ -104,11 +120,13 @@ func processFile(fc FileConfig, t *template.Template) () {
     record,err:=r.Read()
 
     for i:=0;err==nil;record,err=r.Read() {
-        if i>0 {
-            oFile.Write([]byte("\n"))
+        if i==0 {
+            t.ExecuteTemplate(oFile,fc.TemplateName+"_H",makeTemplateContext(&record))
         }
-        t.ExecuteTemplate(oFile,fc.TemplateName,makeTemplateContext(&record))
         i=i+1
+        if i <= fc.Skip {continue}
+        oFile.Write([]byte("\n"))
+        t.ExecuteTemplate(oFile,fc.TemplateName,makeTemplateContext(&record))
     }
     fmt.Println(err)
     oFile.Sync()
@@ -145,7 +163,5 @@ func main() {
             continue
         }
         processFile(fileConfig,textTemplates)
-
-
     }
 }
